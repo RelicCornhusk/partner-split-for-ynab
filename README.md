@@ -1,8 +1,18 @@
-# partner-split-for-ynab
+<div align="center">
+  <h1>Partner Split for YNAB</h1> 
+  <h3>A background worker that automatically syncs shared credit card expenses to an IOU account in YNAB.</h3>
+  <br />
+  <img width="147" height="58.5" alt="image" src="https://api.ynab.com/papi/works_with_ynab.svg" />
+  <br />
+  <br />
+  <a href="https://api.ynab.com/#works-with-ynab">Works with YNAB</a>
+  <br />
+  <br />
+</div>
 
-> A background worker that automatically syncs shared credit card expenses to an IOU account in YNAB.
+<br />
 
-**New to cost sharing in YNAB?** Chelsea Schmidt's [cost-sharing-for-ynab](costsharingforynab.com) is an excellent introduction to the overall concept and how to set up your YNAB accounts correctly before using this tool. I recommend using it a few times (in Standard mode) before using this automation.
+**New to cost sharing in YNAB?** @chelseaSchmidt's [cost-sharing-for-ynab](costsharingforynab.com) is an excellent introduction to the overall concept and how to set up your YNAB accounts correctly before using this tool. I recommend using it a few times (in Standard mode) before using this automation.
 
 ## What it does
 
@@ -150,3 +160,8 @@ uv run main.py
 ## A note on rate limits
 
 The YNAB API allows 200 requests per hour. Each run of this script makes roughly 4–5 API calls, so running every 5 minutes (~60 calls/hour) keeps you well within limits. You could safely run it every minute if you wanted near-real-time syncing.
+
+## Legal disclaimer
+
+We are not affiliated, associated, or in any way officially connected with YNAB or any of its subsidiaries or affiliates. The official YNAB website can be found at https://www.ynab.com.
+The names YNAB and You Need A Budget, as well as related names, tradenames, marks, trademarks, emblems, and images are registered trademarks of YNAB. 
