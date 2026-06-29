@@ -1,18 +1,11 @@
 <div align="center">
   <h1>Partner Split for YNAB</h1> 
   <h3>A background worker that automatically syncs shared credit card expenses to an IOU account in YNAB.</h3>
-  <br />
   <img width="147" height="58.5" alt="image" src="https://api.ynab.com/papi/works_with_ynab.svg" />
-  <br />
-  <br />
-  <a href="https://api.ynab.com/#works-with-ynab">Works with YNAB</a>
-  <br />
-  <br />
 </div>
-
 <br />
 
-**New to cost sharing in YNAB?** @chelseaSchmidt's [cost-sharing-for-ynab](costsharingforynab.com) is an excellent introduction to the overall concept and how to set up your YNAB accounts correctly before using this tool. I recommend using it a few times (in Standard mode) before using this automation.
+**New to cost sharing in YNAB?** [cost-sharing-for-ynab](costsharingforynab.com) is an excellent introduction to the overall concept and how to set up your YNAB accounts correctly before using this tool. I recommend using it a few times (in Standard mode) before using this automation.
 
 ## What it does
 
