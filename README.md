@@ -40,7 +40,9 @@ All configuration is done via environment variables.
 | `YNAB_IOU_ACCOUNT_NAME` | ✅ | — | The exact name of the account where your share of the costs will be recorded as a split transaction. |
 | `YNAB_IOU_PERCENTAGE` | ✅ | — | Your share of shared expenses as an integer (e.g. `50` for half). |
 | `YNAB_LOOKBACK_DAYS` | ❌ | `30` | How many days back to look back for unprocessed transactions. |
+| `LOG_LEVEL` | ❌ | `INFO` | Python logging level for output verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`). |
 
+This tool uses Python's built-in `logging` module, so log output includes timestamps, log levels, and structured messages. Set `LOG_LEVEL=DEBUG` when troubleshooting and `LOG_LEVEL=INFO` for normal steady-state operation.
 
 ## Docker
 
@@ -154,7 +156,9 @@ uv run main.py
 
 ## A note on rate limits
 
-The YNAB API allows 200 requests per hour. Each run of this script makes roughly 4–5 API calls, so running every 5 minutes (~60 calls/hour) keeps you well within limits. You could safely run it every minute if you wanted near-real-time syncing.
+The YNAB API allows 200 requests per hour. Each run of this script makes roughly 4–5 API calls, so running every 3 minutes (~100 calls/hour) keeps you well within limits. You could safely run it every minute if you wanted near-real-time syncing.
+
+The script now also handles HTTP 429 responses gracefully: if rate limited, it sleeps 60 seconds and retries up to 3 times before giving up and waiting for the next scheduled cycle. 
 
 ## Legal disclaimer
 
