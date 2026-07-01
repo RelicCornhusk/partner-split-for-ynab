@@ -2,7 +2,23 @@ from datetime import timedelta
 from datetime import date
 from typing import List
 import os
+import sys
+import time
+import logging
 import ynab
+
+# Configure logging from environment
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+try:
+    LOG_LEVEL_NUM = getattr(logging, LOG_LEVEL)
+except Exception:
+    LOG_LEVEL_NUM = logging.INFO
+logging.basicConfig(
+    level=LOG_LEVEL_NUM,
+    format="%(asctime)s.%(msecs)03d %(levelname)-7s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
 
 
 class YNABClient:
@@ -25,9 +41,34 @@ class YNABClient:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.api_client.__exit__(exc_type, exc_val, exc_tb)
 
+    def _call_with_retries(
+        self, func, *args, max_retries: int = 3, delay_seconds: int = 60, **kwargs
+    ):
+        for attempt in range(1, max_retries + 1):
+            try:
+                return func(*args, **kwargs)
+            except ynab.ApiException as e:
+                status = getattr(e, "status", None)
+                if status == 429:
+                    logger.warning(
+                        "Rate limited, attempt %d/%d, sleeping %ds",
+                        attempt,
+                        max_retries,
+                        delay_seconds,
+                    )
+                    time.sleep(delay_seconds)
+                    continue
+                logger.error("Unrecoverable YNAB API error: %s", e)
+                return None
+        logger.error("Max retries (%d) exhausted due to rate limiting", max_retries)
+        return None
+
     def list_plans(self):
         plans_api = ynab.PlansApi(self.api_client)
-        plans_response = plans_api.get_plans()
+        plans_response = self._call_with_retries(plans_api.get_plans)
+        if plans_response is None:
+            logger.error("Failed to list plans due to API errors")
+            return []
         return plans_response.data.plans
 
     def get_plan_id_from_name(self, plan_name: str) -> str:
@@ -42,7 +83,12 @@ class YNABClient:
 
     def list_accounts(self, plan_id: str):
         accounts_api = ynab.AccountsApi(self.api_client)
-        accounts_response = accounts_api.get_accounts(str(plan_id))
+        accounts_response = self._call_with_retries(
+            accounts_api.get_accounts, str(plan_id)
+        )
+        if accounts_response is None:
+            logger.error("Failed to list accounts for plan %s", plan_id)
+            return []
         return accounts_response.data.accounts
 
     def get_account_id_from_name(self, plan_id: str, account_name: str) -> str:
@@ -59,12 +105,16 @@ class YNABClient:
         self, plan_id: str, account_id: str, since_date: date = None
     ) -> List[ynab.Transaction]:
         transactions_api = ynab.TransactionsApi(self.api_client)
-        response = transactions_api.get_transactions_by_account(
+        response = self._call_with_retries(
+            transactions_api.get_transactions_by_account,
             plan_id=str(plan_id),
             account_id=str(account_id),
             since_date=since_date.isoformat() if since_date else None,
         )
-        print(f"Retrieved {len(response.data.transactions)} transactions")
+        if response is None:
+            logger.error("Failed to fetch transactions for account %s", account_id)
+            return []
+        logger.info("Retrieved %d transactions", len(response.data.transactions))
         return response.data.transactions
 
     def create_iou_transaction(
@@ -107,10 +157,13 @@ class YNABClient:
 
         wrapper = ynab.PostTransactionsWrapper(transaction=new_tx)
 
-        response = transactions_api.create_transaction(
-            plan_id=str(plan_id), data=wrapper
+        response = self._call_with_retries(
+            transactions_api.create_transaction, plan_id=str(plan_id), data=wrapper
         )
-        print("Successfully created split transaction.")
+        if response is None:
+            logger.error("Failed to create IOU transaction for plan %s", plan_id)
+            return None
+        logger.info("Successfully created split transaction.")
         return response
 
     def update_transactions_flag(
@@ -133,12 +186,17 @@ class YNABClient:
                     )
                 )
         if not updates:
-            print("No transactions to update.")
+            logger.info("No transactions to update.")
             return None
 
         wrapper = ynab.PatchTransactionsWrapper(transactions=updates)
-        response = transactions_api.update_transactions(str(plan_id), data=wrapper)
-        print(f"Successfully updated {len(updates)} transactions.")
+        response = self._call_with_retries(
+            transactions_api.update_transactions, str(plan_id), data=wrapper
+        )
+        if response is None:
+            logger.error("Failed to update transactions for plan %s", plan_id)
+            return None
+        logger.info("Successfully updated %d transactions.", len(updates))
         return response
 
 
@@ -149,11 +207,15 @@ if __name__ == "__main__":
     iou_percentage = int(os.getenv("YNAB_IOU_PERCENTAGE"))
 
     with YNABClient() as client:
-        plan_id = client.get_plan_id_from_name(plan_name)
-        shared_account_id = client.get_account_id_from_name(
-            plan_id, shared_account_name
-        )
-        iou_account_id = client.get_account_id_from_name(plan_id, iou_account_name)
+        try:
+            plan_id = client.get_plan_id_from_name(plan_name)
+            shared_account_id = client.get_account_id_from_name(
+                plan_id, shared_account_name
+            )
+            iou_account_id = client.get_account_id_from_name(plan_id, iou_account_name)
+        except Exception as e:
+            logger.error("Startup/setup failed: %s", e)
+            sys.exit(0)
         lookback_days = int(os.getenv("YNAB_LOOKBACK_DAYS", "30"))
         since_date = date.today() - timedelta(days=lookback_days)
 
@@ -161,8 +223,12 @@ if __name__ == "__main__":
             plan_id, shared_account_id, since_date
         )
         for t in new_transactions:
-            print(
-                f"  {t.var_date}  {t.amount / 1000:.2f}  {t.payee_name}  [{t.flag_color}]"
+            logger.debug(
+                "%s  %.2f  %s  [%s]",
+                t.var_date,
+                t.amount / 1000.0,
+                t.payee_name,
+                t.flag_color,
             )
 
         # Filter for transactions that are approved, categorized, and not already processed (flagged).
@@ -181,4 +247,4 @@ if __name__ == "__main__":
             )
             client.update_transactions_flag(plan_id, transactions_to_process)
         else:
-            print("No valid, unprocessed transactions found.")
+            logger.info("No valid, unprocessed transactions found.")
