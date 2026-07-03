@@ -57,6 +57,12 @@ class FakeYNABClient:
             return self.iou_account_id
         raise AssertionError(f"Unexpected account name: {account_name}")
 
+    def get_account_ids_from_names(self, plan_id, account_names):
+        return {
+            account_name: self.get_account_id_from_name(plan_id, account_name)
+            for account_name in account_names
+        }
+
     def fetch_new_transactions(self, plan_id, account_id, since_date):
         return self.transactions
 
@@ -124,6 +130,25 @@ def test_call_with_retries_treats_successful_none_as_success(monkeypatch):
     result = client._call_with_retries(returns_none)
     assert result is None
     assert result is not main._CALL_FAILED
+
+
+def test_get_account_ids_from_names_resolves_multiple_accounts_in_one_pass(monkeypatch):
+    client = main.YNABClient.__new__(main.YNABClient)
+    calls = []
+
+    def fake_list_accounts(plan_id):
+        calls.append(plan_id)
+        return [
+            FakeTransaction(name="shared", id="shared-1"),
+            FakeTransaction(name="iou", id="iou-1"),
+        ]
+
+    monkeypatch.setattr(client, "list_accounts", fake_list_accounts)
+
+    account_ids = client.get_account_ids_from_names("plan-1", ["shared", "iou"])
+
+    assert account_ids == {"shared": "shared-1", "iou": "iou-1"}
+    assert calls == ["plan-1"]
 
 
 def test_main_processes_transactions(monkeypatch):

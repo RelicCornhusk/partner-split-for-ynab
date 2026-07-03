@@ -106,6 +106,21 @@ class YNABClient:
             f"Available accounts: '{[account.name for account in accounts]}'"
         )
 
+    def get_account_ids_from_names(self, plan_id: str, account_names: List[str]):
+        accounts = self.list_accounts(plan_id)
+        account_ids = {}
+        for account_name in account_names:
+            for account in accounts:
+                if account.name == account_name:
+                    account_ids[account_name] = str(account.id)
+                    break
+            else:
+                raise ValueError(
+                    f"Account with name '{account_name}' not found. "
+                    f"Available accounts: '{[account.name for account in accounts]}'"
+                )
+        return account_ids
+
     def fetch_new_transactions(
         self, plan_id: str, account_id: str, since_date: date = None
     ) -> List[ynab.Transaction]:
@@ -215,12 +230,11 @@ def main():
         with YNABClient() as client:
             try:
                 plan_id = client.get_plan_id_from_name(plan_name)
-                shared_account_id = client.get_account_id_from_name(
-                    plan_id, shared_account_name
+                account_ids = client.get_account_ids_from_names(
+                    plan_id, [shared_account_name, iou_account_name]
                 )
-                iou_account_id = client.get_account_id_from_name(
-                    plan_id, iou_account_name
-                )
+                shared_account_id = account_ids[shared_account_name]
+                iou_account_id = account_ids[iou_account_name]
             except Exception as e:
                 logger.error("Startup/setup failed: %s", e)
                 sys.exit(0)
