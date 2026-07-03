@@ -57,6 +57,12 @@ class FakeYNABClient:
             return self.iou_account_id
         raise AssertionError(f"Unexpected account name: {account_name}")
 
+    def get_account_ids_from_names(self, plan_id, account_names):
+        return {
+            account_name: self.get_account_id_from_name(plan_id, account_name)
+            for account_name in account_names
+        }
+
     def fetch_new_transactions(self, plan_id, account_id, since_date):
         return self.transactions
 
@@ -95,7 +101,7 @@ def test_call_with_retries_retries_on_rate_limit(monkeypatch):
     assert sleep_calls == [1, 1]
 
 
-def test_call_with_retries_returns_none_after_exhaustion(monkeypatch, caplog):
+def test_call_with_retries_returns_sentinel_after_exhaustion(monkeypatch, caplog):
     client = main.YNABClient.__new__(main.YNABClient)
     monkeypatch.setattr(main.ynab, "ApiException", DummyApiException)
     monkeypatch.setattr(main.time, "sleep", lambda seconds: None)
@@ -104,14 +110,45 @@ def test_call_with_retries_returns_none_after_exhaustion(monkeypatch, caplog):
         raise DummyApiException(429)
 
     with caplog.at_level(logging.ERROR):
-        assert (
-            client._call_with_retries(
-                always_rate_limited, max_retries=3, delay_seconds=1
-            )
-            is None
+        result = client._call_with_retries(
+            always_rate_limited, max_retries=3, delay_seconds=1
         )
 
+    assert result is main._CALL_FAILED
     assert "Max retries (3) exhausted due to rate limiting" in caplog.text
+
+
+def test_call_with_retries_treats_successful_none_as_success(monkeypatch):
+    """A successful API call that returns None (e.g. 204 No Content) must not
+    be mistaken for a failure. The sentinel, not None, signals failure."""
+    client = main.YNABClient.__new__(main.YNABClient)
+    monkeypatch.setattr(main.ynab, "ApiException", DummyApiException)
+
+    def returns_none():
+        return None
+
+    result = client._call_with_retries(returns_none)
+    assert result is None
+    assert result is not main._CALL_FAILED
+
+
+def test_get_account_ids_from_names_resolves_multiple_accounts_in_one_pass(monkeypatch):
+    client = main.YNABClient.__new__(main.YNABClient)
+    calls = []
+
+    def fake_list_accounts(plan_id):
+        calls.append(plan_id)
+        return [
+            FakeTransaction(name="shared", id="shared-1"),
+            FakeTransaction(name="iou", id="iou-1"),
+        ]
+
+    monkeypatch.setattr(client, "list_accounts", fake_list_accounts)
+
+    account_ids = client.get_account_ids_from_names("plan-1", ["shared", "iou"])
+
+    assert account_ids == {"shared": "shared-1", "iou": "iou-1"}
+    assert calls == ["plan-1"]
 
 
 def test_main_processes_transactions(monkeypatch):
@@ -119,6 +156,7 @@ def test_main_processes_transactions(monkeypatch):
     fake_client.transactions = [
         FakeTransaction(
             approved=True,
+            cleared="cleared",
             category_id="cat-1",
             flag_color=None,
             transfer_account_id=None,
@@ -128,6 +166,7 @@ def test_main_processes_transactions(monkeypatch):
         ),
         FakeTransaction(
             approved=True,
+            cleared="cleared",
             category_id="cat-2",
             flag_color="green",
             transfer_account_id=None,
@@ -160,6 +199,30 @@ def test_main_skips_processing_when_no_transactions_are_valid(monkeypatch):
             var_date="2026-01-01",
             amount=1000,
             payee_name="Groceries",
+            cleared="cleared",
+        )
+    ]
+
+    monkeypatch.setattr(main, "YNABClient", lambda *args, **kwargs: fake_client)
+
+    main.main()
+
+    assert fake_client.created_transactions == []
+    assert fake_client.updated_transactions == []
+
+
+def test_main_skips_processing_for_uncleared_transactions(monkeypatch):
+    fake_client = FakeYNABClient()
+    fake_client.transactions = [
+        FakeTransaction(
+            approved=True,
+            category_id="cat-1",
+            flag_color=None,
+            transfer_account_id=None,
+            var_date="2026-01-01",
+            amount=1000,
+            payee_name="Groceries",
+            cleared="uncleared",
         )
     ]
 

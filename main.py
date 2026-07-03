@@ -20,6 +20,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Sentinel returned by _call_with_retries on failure.
+# Distinguishes a genuine API failure from a successful call that returns None
+# (e.g. PATCH endpoints that return 204 No Content).
+_CALL_FAILED = object()
+
 
 class YNABClient:
     """
@@ -59,14 +64,14 @@ class YNABClient:
                     time.sleep(delay_seconds)
                     continue
                 logger.error("Unrecoverable YNAB API error: %s", e)
-                return None
+                return _CALL_FAILED
         logger.error("Max retries (%d) exhausted due to rate limiting", max_retries)
-        return None
+        return _CALL_FAILED
 
     def list_plans(self):
         plans_api = ynab.PlansApi(self.api_client)
         plans_response = self._call_with_retries(plans_api.get_plans)
-        if plans_response is None:
+        if plans_response is _CALL_FAILED:
             logger.error("Failed to list plans due to API errors")
             return []
         return plans_response.data.plans
@@ -86,7 +91,7 @@ class YNABClient:
         accounts_response = self._call_with_retries(
             accounts_api.get_accounts, str(plan_id)
         )
-        if accounts_response is None:
+        if accounts_response is _CALL_FAILED:
             logger.error("Failed to list accounts for plan %s", plan_id)
             return []
         return accounts_response.data.accounts
@@ -101,6 +106,21 @@ class YNABClient:
             f"Available accounts: '{[account.name for account in accounts]}'"
         )
 
+    def get_account_ids_from_names(self, plan_id: str, account_names: List[str]):
+        accounts = self.list_accounts(plan_id)
+        account_ids = {}
+        for account_name in account_names:
+            for account in accounts:
+                if account.name == account_name:
+                    account_ids[account_name] = str(account.id)
+                    break
+            else:
+                raise ValueError(
+                    f"Account with name '{account_name}' not found. "
+                    f"Available accounts: '{[account.name for account in accounts]}'"
+                )
+        return account_ids
+
     def fetch_new_transactions(
         self, plan_id: str, account_id: str, since_date: date = None
     ) -> List[ynab.Transaction]:
@@ -111,7 +131,7 @@ class YNABClient:
             account_id=str(account_id),
             since_date=since_date.isoformat() if since_date else None,
         )
-        if response is None:
+        if response is _CALL_FAILED:
             logger.error("Failed to fetch transactions for account %s", account_id)
             return []
         logger.info("Retrieved %d transactions", len(response.data.transactions))
@@ -138,6 +158,7 @@ class YNABClient:
                     amount=sub_amount,
                     category_id=t.category_id,
                     payee_name=t.payee_name,
+                    memo=t.var_date.strftime("%Y-%m-%d"),
                 )
             )
 
@@ -160,7 +181,7 @@ class YNABClient:
         response = self._call_with_retries(
             transactions_api.create_transaction, plan_id=str(plan_id), data=wrapper
         )
-        if response is None:
+        if response is _CALL_FAILED:
             logger.error("Failed to create IOU transaction for plan %s", plan_id)
             return None
         logger.info("Successfully created split transaction.")
@@ -175,16 +196,15 @@ class YNABClient:
         # We construct them by extracting the relevant properties from the TransactionDetail objects we fetched.
         updates = []
         for t in transactions:
-            if t.flag_color is None:
-                updates.append(
-                    ynab.SaveTransactionWithIdOrImportId(
-                        id=t.id,
-                        account_id=t.account_id,
-                        var_date=t.var_date,
-                        amount=t.amount,
-                        flag_color=ynab.TransactionFlagColor("green"),
-                    )
+            updates.append(
+                ynab.SaveTransactionWithIdOrImportId(
+                    id=t.id,
+                    account_id=t.account_id,
+                    var_date=t.var_date,
+                    amount=t.amount,
+                    flag_color=ynab.TransactionFlagColor("green"),
                 )
+            )
         if not updates:
             logger.info("No transactions to update.")
             return None
@@ -193,7 +213,7 @@ class YNABClient:
         response = self._call_with_retries(
             transactions_api.update_transactions, str(plan_id), data=wrapper
         )
-        if response is None:
+        if response is _CALL_FAILED:
             logger.error("Failed to update transactions for plan %s", plan_id)
             return None
         logger.info("Successfully updated %d transactions.", len(updates))
@@ -210,12 +230,11 @@ def main():
         with YNABClient() as client:
             try:
                 plan_id = client.get_plan_id_from_name(plan_name)
-                shared_account_id = client.get_account_id_from_name(
-                    plan_id, shared_account_name
+                account_ids = client.get_account_ids_from_names(
+                    plan_id, [shared_account_name, iou_account_name]
                 )
-                iou_account_id = client.get_account_id_from_name(
-                    plan_id, iou_account_name
-                )
+                shared_account_id = account_ids[shared_account_name]
+                iou_account_id = account_ids[iou_account_name]
             except Exception as e:
                 logger.error("Startup/setup failed: %s", e)
                 sys.exit(0)
@@ -234,7 +253,7 @@ def main():
                     t.flag_color,
                 )
 
-            # Filter for transactions that are approved, categorized, and not already processed (flagged).
+            # Filter for transactions that are approved, cleared or reconciled, categorized, and not already processed (flagged).
             transactions_to_process = [
                 t
                 for t in new_transactions
@@ -242,6 +261,7 @@ def main():
                 and t.category_id is not None
                 and t.flag_color is None
                 and t.transfer_account_id is None
+                and t.cleared != "uncleared"
             ]
 
             if transactions_to_process:
