@@ -20,6 +20,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Sentinel returned by _call_with_retries on failure.
+# Distinguishes a genuine API failure from a successful call that returns None
+# (e.g. PATCH endpoints that return 204 No Content).
+_CALL_FAILED = object()
+
 
 class YNABClient:
     """
@@ -59,14 +64,14 @@ class YNABClient:
                     time.sleep(delay_seconds)
                     continue
                 logger.error("Unrecoverable YNAB API error: %s", e)
-                return None
+                return _CALL_FAILED
         logger.error("Max retries (%d) exhausted due to rate limiting", max_retries)
-        return None
+        return _CALL_FAILED
 
     def list_plans(self):
         plans_api = ynab.PlansApi(self.api_client)
         plans_response = self._call_with_retries(plans_api.get_plans)
-        if plans_response is None:
+        if plans_response is _CALL_FAILED:
             logger.error("Failed to list plans due to API errors")
             return []
         return plans_response.data.plans
@@ -86,10 +91,10 @@ class YNABClient:
         accounts_response = self._call_with_retries(
             accounts_api.get_accounts, str(plan_id)
         )
-        if accounts_response is None:
+        if accounts_response is _CALL_FAILED:
             logger.error("Failed to list accounts for plan %s", plan_id)
             return []
-            return accounts_response.data.accounts
+        return accounts_response.data.accounts
 
     def get_account_id_from_name(self, plan_id: str, account_name: str) -> str:
         accounts = self.list_accounts(plan_id)
@@ -111,7 +116,7 @@ class YNABClient:
             account_id=str(account_id),
             since_date=since_date.isoformat() if since_date else None,
         )
-        if response is None:
+        if response is _CALL_FAILED:
             logger.error("Failed to fetch transactions for account %s", account_id)
             return []
         logger.info("Retrieved %d transactions", len(response.data.transactions))
@@ -161,7 +166,7 @@ class YNABClient:
         response = self._call_with_retries(
             transactions_api.create_transaction, plan_id=str(plan_id), data=wrapper
         )
-        if response is None:
+        if response is _CALL_FAILED:
             logger.error("Failed to create IOU transaction for plan %s", plan_id)
             return None
         logger.info("Successfully created split transaction.")
@@ -194,7 +199,7 @@ class YNABClient:
         response = self._call_with_retries(
             transactions_api.update_transactions, str(plan_id), data=wrapper
         )
-        if response is None:
+        if response is _CALL_FAILED:
             logger.error("Failed to update transactions for plan %s", plan_id)
             return None
         logger.info("Successfully updated %d transactions.", len(updates))

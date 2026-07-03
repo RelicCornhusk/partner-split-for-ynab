@@ -95,7 +95,7 @@ def test_call_with_retries_retries_on_rate_limit(monkeypatch):
     assert sleep_calls == [1, 1]
 
 
-def test_call_with_retries_returns_none_after_exhaustion(monkeypatch, caplog):
+def test_call_with_retries_returns_sentinel_after_exhaustion(monkeypatch, caplog):
     client = main.YNABClient.__new__(main.YNABClient)
     monkeypatch.setattr(main.ynab, "ApiException", DummyApiException)
     monkeypatch.setattr(main.time, "sleep", lambda seconds: None)
@@ -104,14 +104,26 @@ def test_call_with_retries_returns_none_after_exhaustion(monkeypatch, caplog):
         raise DummyApiException(429)
 
     with caplog.at_level(logging.ERROR):
-        assert (
-            client._call_with_retries(
-                always_rate_limited, max_retries=3, delay_seconds=1
-            )
-            is None
+        result = client._call_with_retries(
+            always_rate_limited, max_retries=3, delay_seconds=1
         )
 
+    assert result is main._CALL_FAILED
     assert "Max retries (3) exhausted due to rate limiting" in caplog.text
+
+
+def test_call_with_retries_treats_successful_none_as_success(monkeypatch):
+    """A successful API call that returns None (e.g. 204 No Content) must not
+    be mistaken for a failure. The sentinel, not None, signals failure."""
+    client = main.YNABClient.__new__(main.YNABClient)
+    monkeypatch.setattr(main.ynab, "ApiException", DummyApiException)
+
+    def returns_none():
+        return None
+
+    result = client._call_with_retries(returns_none)
+    assert result is None
+    assert result is not main._CALL_FAILED
 
 
 def test_main_processes_transactions(monkeypatch):
