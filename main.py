@@ -89,7 +89,7 @@ class YNABClient:
         if accounts_response is None:
             logger.error("Failed to list accounts for plan %s", plan_id)
             return []
-        return accounts_response.data.accounts
+            return accounts_response.data.accounts
 
     def get_account_id_from_name(self, plan_id: str, account_name: str) -> str:
         accounts = self.list_accounts(plan_id)
@@ -138,6 +138,7 @@ class YNABClient:
                     amount=sub_amount,
                     category_id=t.category_id,
                     payee_name=t.payee_name,
+                    memo=t.var_date.strftime("%Y-%m-%d"),
                 )
             )
 
