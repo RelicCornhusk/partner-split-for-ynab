@@ -131,6 +131,7 @@ def test_main_processes_transactions(monkeypatch):
     fake_client.transactions = [
         FakeTransaction(
             approved=True,
+            cleared="cleared",
             category_id="cat-1",
             flag_color=None,
             transfer_account_id=None,
@@ -140,6 +141,7 @@ def test_main_processes_transactions(monkeypatch):
         ),
         FakeTransaction(
             approved=True,
+            cleared="cleared",
             category_id="cat-2",
             flag_color="green",
             transfer_account_id=None,
@@ -172,6 +174,30 @@ def test_main_skips_processing_when_no_transactions_are_valid(monkeypatch):
             var_date="2026-01-01",
             amount=1000,
             payee_name="Groceries",
+            cleared="cleared",
+        )
+    ]
+
+    monkeypatch.setattr(main, "YNABClient", lambda *args, **kwargs: fake_client)
+
+    main.main()
+
+    assert fake_client.created_transactions == []
+    assert fake_client.updated_transactions == []
+
+
+def test_main_skips_processing_for_uncleared_transactions(monkeypatch):
+    fake_client = FakeYNABClient()
+    fake_client.transactions = [
+        FakeTransaction(
+            approved=True,
+            category_id="cat-1",
+            flag_color=None,
+            transfer_account_id=None,
+            var_date="2026-01-01",
+            amount=1000,
+            payee_name="Groceries",
+            cleared="uncleared",
         )
     ]
 

@@ -181,16 +181,15 @@ class YNABClient:
         # We construct them by extracting the relevant properties from the TransactionDetail objects we fetched.
         updates = []
         for t in transactions:
-            if t.flag_color is None:
-                updates.append(
-                    ynab.SaveTransactionWithIdOrImportId(
-                        id=t.id,
-                        account_id=t.account_id,
-                        var_date=t.var_date,
-                        amount=t.amount,
-                        flag_color=ynab.TransactionFlagColor("green"),
-                    )
+            updates.append(
+                ynab.SaveTransactionWithIdOrImportId(
+                    id=t.id,
+                    account_id=t.account_id,
+                    var_date=t.var_date,
+                    amount=t.amount,
+                    flag_color=ynab.TransactionFlagColor("green"),
                 )
+            )
         if not updates:
             logger.info("No transactions to update.")
             return None
@@ -240,7 +239,7 @@ def main():
                     t.flag_color,
                 )
 
-            # Filter for transactions that are approved, categorized, and not already processed (flagged).
+            # Filter for transactions that are approved, cleared or reconciled, categorized, and not already processed (flagged).
             transactions_to_process = [
                 t
                 for t in new_transactions
@@ -248,6 +247,7 @@ def main():
                 and t.category_id is not None
                 and t.flag_color is None
                 and t.transfer_account_id is None
+                and t.cleared != "uncleared"
             ]
 
             if transactions_to_process:
